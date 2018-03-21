@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  Cloudformation Kubernetes Production setup, single master, multi nodes, multi Az
+
+
+Parameters:
+  LoadBalancerScheme:
+    Type: String
+    Default: internet-facing
+    Description: Specifies whether the load balancer is internal or Internet-facing.
+    AllowedValues:
+      - internet-facing
+      - internal
+
+  ClusterName:
+    Type: String
+    Default: clusterk8s01
+    Description: Unique name of the cluster.
+    AllowedPattern: ^[\w\.-]{1,25}$
+  
+  KubernetesToken:
+    Type: String
+    Default: "123456.1234567890123456"
+    Description: Token to join this Kubernetes cluster
+    AllowedPattern: ^[a-z0-9]{6}\.[a-z0-9]{16}$
+    MinLength: 23
+    MaxLength: 23
+    NoEcho: true
+
+  PodNetworkCIDR:
+    Type: String
+    Default: "10.215.0.0/16"
+    Description: CIDR of the overlay network (Flannel), should not conflict with existing subnets.
+    MinLength: 10
+    MaxLength: 19
+
+  VpcCIDR:
+    Type: String
+    Description: VPC CIDR block
+    Default: 10.214.0.0/16
+
+  TemplateBucketName:
+    Type: String
+    Description: Bucket Name containing all the template files
+
+  Subnet1CIDR:
+    Type: String
+    Description: Subnet1 CIDR block
+    Default: 10.214.10.0/24
+
+  Subnet2CIDR:
+    Type: String
+    Description: Subnet2 CIDR block
+    Default: 10.214.20.0/24
+
+  Subnet3CIDR:
+    Type: String
+    Description: Subnet3 CIDR block
+    Default: 10.214.30.0/24
+
+  TemplateBucketName:
+    Type: String
+    Description: Bucket keeping the architecture template files
+    Default: k8stemplatesdev
+
+  DockerVersion:
+    Type: String
+    Default: "1.12.6"
+    Description: |
+      Version of Docker to use. Compatible with Kubernetes, 
+      see https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG.md
+  
+  KubernetesVersion:
+    Type: String
+    Default: "1.8.0"
+    Description: Version of Kubernetes 
+  
+  FlannelVersion:
+    Type: String
+    Default: "0.9.0"
+    Description: Version of Flannel
+  
+  TraefikVersion:
+    Type: String
+    Default: "1.4"
+    Description: Version of Traefik
+  
+  MasterInstanceType:
+    Type: String
+    Default: t2.small
+    Description: Instance type for the Master node. Default is t2.small.
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+  
+  NodeInstanceType:
+    Type: String
+    Default: t2.small
+    Description: Instance type for the nodes. Default is t2.small.
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+  
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-a042f4d8
+    Description: AMI to use for the EC2 instances
+  
+  MasterDiskSpace:
+    Type: Number
+    Default: 10
+    Description: Disk size in GB for Docker images and volumes on the master.
+    MinValue: 1
+    MaxValue: 16000
+  
+  WorkerDiskSpace:
+    Type: Number
+    Default: 10
+    Description: Disk size in GB for Docker images and volumes on the worker nodes.
+    MinValue: 1
+    MaxValue: 16000
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Key Pair Name
+    Default: KubernetesProdKeyPair
+
+  DestinationCidrBlock:
+    Type: String
+    Default: 0.0.0.0/0
+
+
+Resources:
+
+  VPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucketName}/vpc.yaml"
+      Parameters:
+        Name: !Ref AWS::StackName
+        VpcCIDR: !Ref VpcCIDR
+        Subnet3CIDR: !Ref Subnet3CIDR
+        Subnet1CIDR: !Ref Subnet1CIDR
+        Subnet2CIDR: !Ref Subnet2CIDR
+        DestinationCidrBlock: !Ref DestinationCidrBlock
+
+  LoadBalancer:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucketName}/load-balancer-k8s.yaml"
+      Parameters:
+        Subnets: !GetAtt VPC.Outputs.Subnets
+        Subnet1: !GetAtt VPC.Outputs.Subnet1
+        Subnet2: !GetAtt VPC.Outputs.Subnet2
+        Subnet3: !GetAtt VPC.Outputs.Subnet3
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        ClusterName: !Ref ClusterName
+        LoadBalancerScheme: !Ref LoadBalancerScheme
+
+  MasterNode:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucketName}/master-node.yaml"
+      Parameters:
+        Subnet1: !GetAtt VPC.Outputs.Subnet1
+        Subnet2: !GetAtt VPC.Outputs.Subnet2
+        Subnet3: !GetAtt VPC.Outputs.Subnet3
+        KeyPairName: !Ref KeyPairName
+        ClusterName: !Ref ClusterName
+        KubernetesVersion: !Ref KubernetesVersion
+        DockerVersion: !Ref DockerVersion
+        PodNetworkCIDR: !Ref PodNetworkCIDR
+        LoadBalancerDNS: !GetAtt LoadBalancer.Outputs.LoadBalancerDNS
+        KubernetesToken: !Ref KubernetesToken
+        FlannelVersion: !Ref FlannelVersion
+        TraefikVersion: !Ref TraefikVersion
+        MasterInstanceType: !Ref MasterInstanceType
+        NodeInstanceType: !Ref NodeInstanceType
+        ImageId: !Ref ImageId
+        MasterDiskSpace: !Ref MasterDiskSpace
+        WorkerDiskSpace: !Ref WorkerDiskSpace
+        MasterAPITargetGroup: !GetAtt LoadBalancer.Outputs.MasterAPITargetGroup
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        NodeHTTPTargetGroup: !GetAtt LoadBalancer.Outputs.NodeHTTPTargetGroup
+        NodeHTTPSTargetGroup: !GetAtt LoadBalancer.Outputs.NodeHTTPSTargetGroup
+
+
+Outputs:
+  DNSName:
+    Description: URL of the cluster.
+    Value: !GetAtt LoadBalancer.Outputs.LoadBalancerDNS
+    Export:
+      Name: !Sub "${AWS::StackName}-Endpoint"

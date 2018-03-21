@@ -1,0 +1,138 @@
+Description: >
+  Kubernetes Cluster Load Balancer
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  Subnet1:
+    Type: AWS::EC2::Subnet::Id
+
+  Subnet2:
+    Type: AWS::EC2::Subnet::Id
+
+  Subnet3:
+    Type: AWS::EC2::Subnet::Id
+
+  LoadBalancerScheme:
+    Type: String
+
+  ClusterName:
+    Type: String
+
+Resources:
+
+  # Load Balancer
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn:
+      - Subnet1EIP
+      - Subnet2EIP
+      - Subnet3EIP
+    Properties:
+      Name: !Ref ClusterName
+      Type: network
+      Scheme: !Ref LoadBalancerScheme
+      SubnetMappings:
+        - AllocationId: !GetAtt [ Subnet1EIP, AllocationId ]
+          SubnetId: !Ref Subnet1
+        - AllocationId: !GetAtt [ Subnet2EIP, AllocationId ]
+          SubnetId: !Ref Subnet2
+        - AllocationId: !GetAtt [ Subnet3EIP, AllocationId ]
+          SubnetId: !Ref Subnet3
+      Tags:
+        - Key: Name
+          Value: !Ref ClusterName
+  
+  Subnet1EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+  
+  Subnet2EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+  
+  Subnet3EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+
+  # Load Balancer: Master
+  MasterAPIListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 6443
+      Protocol: TCP
+      DefaultActions: 
+        - Type: forward
+          TargetGroupArn: !Ref MasterAPITargetGroup
+
+  MasterAPITargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ClusterName}-master
+      VpcId: !Ref VpcId
+      Port: 6443
+      Protocol: TCP
+
+  # Load Balancer: Node
+  NodeHTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: TCP
+      DefaultActions: 
+        - Type: forward
+          TargetGroupArn: !Ref NodeHTTPTargetGroup
+  
+  NodeHTTPTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ClusterName}-http
+      VpcId: !Ref VpcId
+      Port: 80
+      Protocol: TCP
+  
+  NodeHTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: TCP
+      DefaultActions: 
+        - Type: forward
+          TargetGroupArn: !Ref NodeHTTPSTargetGroup
+  
+  NodeHTTPSTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ClusterName}-https
+      VpcId: !Ref VpcId
+      Port: 443
+      Protocol: TCP
+
+
+Outputs:
+
+  ServiceUrl:
+    Description: URL of the load balancer for the sample service.
+    Value: !Sub http://${LoadBalancer.DNSName}
+
+  LoadBalancerDNS:
+    Value: !GetAtt LoadBalancer.DNSName
+
+  NodeHTTPTargetGroup:
+    Value: !Ref NodeHTTPTargetGroup
+
+  NodeHTTPSTargetGroup:
+    Value: !Ref NodeHTTPSTargetGroup
+
+  MasterAPITargetGroup:
+    Value: !Ref MasterAPITargetGroup
